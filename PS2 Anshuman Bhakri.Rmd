@@ -1,0 +1,235 @@
+---
+title: "PS1 - Anshuman Bhakri"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("~/GitHub/bc-micro-methods/bc-micro-methods/PS2")
+
+library(data.table)
+library(reshape2)
+library(stringr)
+library(stringi)
+library(foreign)
+library(dplyr)
+library(plyr)
+library(ggplot2)
+library(sjmisc)
+library(knitr)
+library(naniar)
+library(kdensity)
+library(evmix)
+library(caret)
+library(snpar)
+```
+
+
+
+
+
+```{r,echo=TRUE,warning = FALSE}
+bids<-read.csv('nodelmp.csv',header = TRUE)
+
+# colnames(bids)
+# sapply(bids, class)
+bids_sort<-bids[order(bids$year,bids$month,bids$day,-bids$lmp),]
+bids_max_temp_price<-data.frame(ddply(bids_sort, .(year,month,day), summarize,
+                                      temp_max=first(temp),
+                                      lmp_max=first(lmp)
+                                      ))
+
+```
+
+## Question 1 - Binner Scatter Plots
+### No, the relation does not look linear, it looks more like a polynomial relationship
+
+```{r,echo=TRUE,warning = FALSE}
+ggplot(bids_max_temp_price,aes(x=temp_max,y=lmp_max)) + geom_bin2d() +
+       geom_point(color="red") 
+```
+
+
+
+## Question 2
+
+
+### Polynomial Relationship : p=7 seems to fit the best
+
+```{r, echo=TRUE,warning=FALSE}
+
+lmp_pred<-matrix(,nrow=nrow(bids_max_temp_price),ncol = 12)
+lmp_pred[,1]<-bids_max_temp_price$temp_max
+lmp_pred[,2]<-bids_max_temp_price$lmp_max
+r.square_2 = matrix(data=NA,nrow=1,ncol=10)
+
+for (i in 1:10)
+{
+  model <- lm(lmp_max ~ poly(temp_max,i),data=bids_max_temp_price)
+  lmp_pred[,i+2]<-fitted(model)
+  r.square_2[1,i] = 1-(1-cor(lmp_pred[,i+2], lmp_pred[,2],
+                             use='complete')^2)*((nrow(bids_max_temp_price)-1)/(nrow(bids_max_temp_price)-i))
+}
+
+columns<-paste("p=",c(1:10))
+columns<-c("Temp","Actual",columns)
+colnames(lmp_pred)<-columns
+matplot(lmp_pred[,1],lmp_pred[,3:12],type='l',)+matpoints(lmp_pred[,2],pch=21:25)
+
+plot(c(1:10),r.square_2, type='l',xlab = "P",ylab = "R_Sq")
+  
+```
+
+
+
+
+## Question 3 
+### After Cross Validation p=7 seems the best fit still
+```{r, echo=TRUE}
+dat.shuffled <- bids_max_temp_price[sample(nrow(bids_max_temp_price)),]
+K <- 10
+order<-10
+folds <- cut(seq(1,nrow(dat.shuffled)),breaks=K,labels=FALSE)
+
+#Creating empty object to hold fit information
+r.square_3 = matrix(data=NA,nrow=K,ncol=order)
+
+#Perform K-fold cross validation
+for(i in 1:K){
+    #Segement data by fold using the which() function 
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    testData <- dat.shuffled[testIndexes, ]
+    trainData <- dat.shuffled[-testIndexes, ]
+    #Use the test and train data partitions
+    #Model fitting and evaluation
+    for (j in 1:order){
+      #training regression model on training folds
+        fit.train = lm(lmp_max ~ poly(temp_max,j), data = trainData)
+        #evaluating fit on the test fold
+            fit.test = predict(fit.train, newdata=testData)
+        r.square_3[i,j] = cor(fit.test, testData$lmp_max,use='complete')^2
+    }
+}
+
+#Averaging fit at each order 
+fits.kfold <- colMeans(r.square_3)
+#plotting cross-validated prediction accuracy 
+plot(colMeans(r.square_3), type='l',xlab = "P",ylab = "R_Sq")
+
+# 7 seems to be pcv
+model_pcv<-lm (lmp_max ~ poly(temp_max,7), data = bids_max_temp_price)
+lmp_pred_pcv<-model_pcv$fitted.values
+lmp_pred_pcv_res<-model_pcv$residuals
+```
+
+
+
+## Question 4
+### Not Sure about the ask of the question
+```{r, echo=TRUE,warning=FALSE}
+colors_4 <- c("p=1" = "red", "p=2" = "yellow","pcv=7" = "blue", "p=10" = "pink")
+
+ggplot(bids_max_temp_price,aes(x=bids_max_temp_price$temp_max))+
+  ggtitle("Plotting the Polynomial Models")+
+  xlab("Temp")+
+  ylab("lmp")+
+geom_point(aes(y = bids_max_temp_price$lmp_max)) +
+  geom_line(lwd = 1, aes(y=lmp_pred[,3],color = 'p=1')) +
+  geom_line(lwd = 1, aes(y=lmp_pred[,4],color = 'p=2')) +
+  geom_line(lwd = 1, aes(y=lmp_pred[,9],color = 'pcv=7')) +
+  geom_line(lwd = 1, aes(y=lmp_pred[,12],color = 'p=10')) +
+  ylim(1,300) +
+  scale_color_manual(name="P",breaks=c("p=1","p=2","pcv=7","p=10"),values=colors_4)
+
+```
+
+## Question 5
+### Optimal NUmber of Splines = 6
+```{r, echo=TRUE,warning=FALSE}
+
+dat.shuffled <- bids_max_temp_price[sample(nrow(bids_max_temp_price)),]
+K <- 10
+knots<-10
+folds <- cut(seq(1,nrow(dat.shuffled)),breaks=K,labels=FALSE)
+
+#Creating empty object to hold fit information
+r.square_5 = matrix(data=NA,nrow=K,ncol=knots)
+
+#Perform K-fold cross validation
+for(i in 1:K){
+    #Segement data by fold using the which() function 
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    testData <- dat.shuffled[testIndexes, ]
+    trainData <- dat.shuffled[-testIndexes, ]
+    #Use the test and train data partitions
+    #Model fitting and evaluation
+    for (j in 1:knots){
+      #training regression model on training folds
+        fit.train = lm(lmp_max ~ ns(temp_max,df = j,intercept = TRUE)-1, data = trainData)
+        #evaluating fit on the test fold
+            fit.test = predict(fit.train, newdata=testData)
+        r.square_5[i,j] = cor(fit.test, testData$lmp_max, use='complete')^2
+    }
+}
+
+
+#Averaging fit at each order 
+fits.kfold_5 <- colMeans(r.square_5)
+#plotting cross-validated prediction accuracy 
+plot(colMeans(r.square_5), type='l',xlab = "Splines",ylab = "R_Sq")
+
+# 6 seems to give optimal spline prediction
+model_spline<-lm(lmp_max ~ ns(temp_max,df = 6,intercept = TRUE)-1, data = bids_max_temp_price)
+lmp_pred_spline<-model_spline$fitted.values
+lmp_pred_spline_res<-model_spline$residuals
+
+```
+
+
+## Question 6
+
+```{r, echo=TRUE,warning=FALSE}
+lowess<-loess(lmp_max ~ temp_max,data = bids_max_temp_price)
+lmp_pred_lowess<-predict(lowess)
+lmp_pred_lowess_res<-lowess$residuals
+
+plot(bids_max_temp_price$lmp_max, x=bids_max_temp_price$temp_max, ylim=c(1,300),type="p",col="black", main="P_cv,Spline and Loess", xlab="temp", ylab="lmp")
+lines(lmp_pred_pcv, x=bids_max_temp_price$temp_max, col="red")
+lines(lmp_pred_spline, x=bids_max_temp_price$temp_max, col="blue")
+lines(lmp_pred_lowess, x=bids_max_temp_price$temp_max, col="pink")
+legend(1, 95, legend=c("Actual","P=7", "Natural cubic spline","Lowess"),col=c("black","red", "blue","pink"), lty=1:4, cex=0.8)
+
+colors_6 <- c("Natural Cubic Spline" = "red","pcv=7" = "blue", "Lowess" = "pink")
+
+ggplot(bids_max_temp_price,aes(x=bids_max_temp_price$temp_max))+
+    ggtitle("Plotting the different Models")+
+  xlab("Temp")+
+  ylab("lmp")+
+geom_point(aes(y = bids_max_temp_price$lmp_max)) +
+  geom_line(lwd = 1, aes(y=lmp_pred_spline,color = 'Natural Cubic Spline')) +
+  geom_line(lwd = 1, aes(y=lmp_pred_pcv,color = 'pcv=7')) +
+  geom_line(lwd = 1, aes(y=lmp_pred_lowess,color = 'Lowess')) +
+  ylim(1,300) +
+  scale_color_manual(name="Model",breaks=c("Natural Cubic Spline","pcv=7","Lowess"),values=colors_6)
+
+
+```
+
+
+## Question 7
+### In the middle of the graph from Temperature from 40-70 , Lowess and Natural Cubic SPline are doing pretty great. Whereas at the extreme ends Polynomial relationship from Cross validation (i.ie p=7) is doing decent.
+```{r, echo=TRUE,warning=FALSE}
+
+colors_6 <- c("Natural Cubic Spline" = "red","pcv=7" = "blue", "Lowess" = "pink")
+
+ggplot(bids_max_temp_price,aes(x=bids_max_temp_price$temp_max))+ 
+  ggtitle("Residuals of the Models")+
+  xlab("Temp")+
+  ylab("lmp Residuals")+
+  geom_point(lwd = 1, aes(y=lmp_pred_spline_res,color = 'Natural Cubic Spline')) +
+  geom_point(lwd = 1, aes(y=lmp_pred_pcv_res,color = 'pcv=7')) +
+  geom_point(lwd = 1, aes(y=lmp_pred_lowess_res,color = 'Lowess')) +
+  ylim(-60,200) +
+  scale_color_manual(name="Models",breaks=c("Natural Cubic Spline","pcv=7","Lowess"),values=colors_6)
+
+```
