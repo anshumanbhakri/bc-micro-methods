@@ -1,0 +1,291 @@
+---
+title: "PS3 - Anshuman Bhakri"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("~/GitHub/bc-micro-methods/bc-micro-methods/PS3")
+
+library(data.table)
+library(reshape2)
+library(stringr)
+library(stringi)
+library(foreign)
+library(dplyr)
+library(plyr)
+library(ggplot2)
+library(sjmisc)
+library(knitr)
+library(naniar)
+library(kdensity)
+library(evmix)
+library(caret)
+library(snpar)
+library(corrplot)
+library(RColorBrewer)
+library(xtable)
+library(glmnet)
+```
+
+
+
+
+
+```{r,echo=TRUE,warning = FALSE}
+data<-read.csv('boston_cl.csv',header = TRUE)
+# colnames(data)
+# sapply(data, class)
+
+
+dat.shuffled <- data[sample(nrow(data)),]
+folds <- cut(seq(1,nrow(dat.shuffled)),breaks=5,labels=FALSE)
+#table(folds)
+testIndexes <- which(folds==5,arr.ind=TRUE)
+testData <- dat.shuffled[testIndexes, ]
+trainData <- dat.shuffled[-testIndexes, ]
+
+
+```
+
+## Question 1 - Correlation
+### medv is highly correlated with lstat, ptratio and rm
+
+```{r,echo=TRUE,warning = FALSE}
+correlation_1 <-round(cor(data),2)
+corrplot(correlation_1, type="upper", order="hclust",
+         col=brewer.pal(n=8, name="RdYlBu"))
+upper<-correlation_1
+upper[upper.tri(correlation_1)]<-""
+upper<-as.data.frame(upper)
+upper
+
+```
+
+
+
+## Question 2
+
+
+
+```{r, echo=TRUE,warning=FALSE}
+#colnames(trainData)
+model_2<-lm(log(medv) ~ crim + zn + indus + chas + I(nox^2) + I(rm^2) + age + dis + rad + tax + ptratio + black + lstat,
+            data = trainData)
+
+# coef(model_2)
+# summary(model_2)
+testData_x_test_2<-as.matrix(cbind(testData[,2:5],(testData[,6:7])^2,testData[,8:14]))
+trainData_x_test_2<-as.matrix(cbind(trainData[,2:5],(trainData[,6:7])^2,trainData[,8:14]))
+testData_y_test_2<-log(testData[,15])
+
+
+
+
+```
+
+
+
+
+## Question 3 - Lasso
+
+```{r, echo=TRUE}
+train.dat.shuffled <- trainData[sample(nrow(trainData)),]
+K <- 10
+lambdas_3<-seq(0.1, 5, length = 100)
+folds_3 <- cut(seq(1,nrow(train.dat.shuffled)),breaks=K,labels=FALSE)
+
+#Creating empty object to hold fit information
+mse_3 = matrix(data=NA,nrow=K,ncol=length(lambdas_3))
+
+#Perform K-fold cross validation
+for(i in 1:K){
+    #Segement data by fold using the which() function 
+    testIndexes_3 <- which(folds_3==i,arr.ind=TRUE)
+    testData_3 <- train.dat.shuffled[testIndexes_3, ]
+    trainData_3 <- train.dat.shuffled[-testIndexes_3, ]
+    #Use the test and train data partitions
+    #Model fitting and evaluation
+    
+    x_train_3<-as.matrix(cbind(trainData_3[,2:5],(trainData_3[,6:7])^2,trainData_3[,8:14]))
+    y_train_3<-log(trainData_3[,15])
+    x_test_3<-as.matrix(cbind(testData_3[,2:5],(testData_3[,6:7])^2,testData_3[,8:14]))
+    y_test_3<-log(testData_3[,15])
+    
+    fit.train_3 = glmnet(x_train_3, y_train_3, alpha = 1,, lambda = lambdas_3)
+    pred_3 = predict(fit.train_3, s = lambdas_3, newx = x_test_3)
+    
+    mse_3[i,1:length(lambdas_3)]<-colMeans((pred_3 - y_test_3)^2)
+    }
+
+
+
+#Averaging fit at each order 
+fits.kfold_3 <- colMeans(mse_3)
+
+#plotting cross-validated prediction accuracy 
+
+#CHossing OPtimal Lambda
+plot(x=lambdas_3,y=colMeans(mse_3), type='l',xlab = "Lambda",ylab = "MSE")
+abline(h = +sd(fits.kfold_3)+min(fits.kfold_3),col="red")
+# coef(fit.train_3,s=5)
+
+opt_lambda_3<-max(lambdas_3[abs(min(fits.kfold_3)-fits.kfold_3)/sd(fits.kfold_3)<1])
+
+testData_x_test_3<-as.matrix(cbind(testData[,2:5],(testData[,6:7])^2,testData[,8:14]))
+trainData_x_test_3<-as.matrix(cbind(trainData[,2:5],(trainData[,6:7])^2,trainData[,8:14]))
+testData_y_test_3<-log(testData[,15])
+fit.train_3 = glmnet(trainData_x_test_3, log(trainData[,15]), alpha = 1,, lambda = opt_lambda_3)
+
+res_testData_3<- testData_y_test_3-predict(fit.train_3, s = opt_lambda_3, newx = testData_x_test_3) 
+
+
+
+```
+
+
+
+## Question 4
+
+```{r, echo=TRUE,warning=FALSE}
+
+train.dat.shuffled <- trainData[sample(nrow(trainData)),]
+K <- 10
+lambdas_4<-seq(0.1, 5, length = 100)
+folds_4 <- cut(seq(1,nrow(train.dat.shuffled)),breaks=K,labels=FALSE)
+
+#Creating empty object to hold fit information
+mse_4 = matrix(data=NA,nrow=K,ncol=length(lambdas_4))
+
+#Perform K-fold cross validation
+for(i in 1:K){
+    #Segement data by fold using the which() function 
+    testIndexes_4 <- which(folds_4==i,arr.ind=TRUE)
+    testData_4 <- train.dat.shuffled[testIndexes_4, ]
+    trainData_4 <- train.dat.shuffled[-testIndexes_4, ]
+    #Use the test and train data partitions
+    #Model fitting and evaluation
+    x_train_4<-as.matrix(cbind(trainData_4[,2:5],(trainData_4[,6:7])^2,trainData_4[,8:14]))
+    y_train_4<-log(trainData_4[,15])
+    x_test_4<-as.matrix(cbind(testData_4[,2:5],(testData_4[,6:7])^2,testData_4[,8:14]))
+    y_test_4<-log(testData_4[,15])
+    
+    fit.train_4 = glmnet(x_train_4, y_train_4, alpha = 0,, lambda = lambdas_4)
+    pred_4 = predict(fit.train_4, s = lambdas_4, newx = x_test_4)
+    
+    mse_4[i,1:length(lambdas_4)]<-colMeans((pred_4 - y_test_4)^2)
+    }
+
+
+#Averaging fit at each order 
+fits.kfold_4 <- colMeans(mse_4)
+
+#plotting cross-validated prediction accuracy 
+
+#CHossing OPtimal Lambda
+plot(x=lambdas_4,y=colMeans(mse_4), type='l',xlab = "Lambda",ylab = "MSE")
+abline(h = +sd(fits.kfold_4)+min(fits.kfold_4),col="red")
+
+
+opt_lambda_4<-max(lambdas_4[abs(min(fits.kfold_4)-fits.kfold_4)/sd(fits.kfold_4)<1])
+
+trainData_x_test_4<-as.matrix(cbind(trainData[,2:5],(trainData[,6:7])^2,trainData[,8:14]))
+testData_x_test_4<-as.matrix(cbind(testData[,2:5],(testData[,6:7])^2,testData[,8:14]))
+testData_y_test_4<-log(testData[,15])
+fit.train_4 = glmnet(trainData_x_test_4, log(trainData[,15]), alpha = 0,, lambda = opt_lambda_4)
+res_testData_4<- testData_y_test_4-predict(fit.train_4, s = opt_lambda_4, newx = testData_x_test_4) 
+
+```
+
+## Question 5
+### highly correlated variables lstat, ptratio, rm still survive
+```{r, echo=TRUE,warning=FALSE}
+
+train.dat.shuffled <- trainData[sample(nrow(trainData)),]
+K <- 10
+lambdas_5<-seq(0.1, 5, length = 100)
+folds_5 <- cut(seq(1,nrow(train.dat.shuffled)),breaks=K,labels=FALSE)
+
+#Creating empty object to hold fit information
+mse_5 = matrix(data=NA,nrow=K,ncol=length(lambdas_5))
+#Perform K-fold cross validation
+for(i in 1:K){
+    #Segement data by fold using the which() function 
+    testIndexes_5 <- which(folds_5==i,arr.ind=TRUE)
+    testData_5 <- train.dat.shuffled[testIndexes_5, ]
+    trainData_5 <- train.dat.shuffled[-testIndexes_5, ]
+    #Use the test and train data partitions
+    #Model fitting and evaluation
+    x_train_5<-as.matrix(cbind(trainData_5[,2:5],trainData_5[,8:14],trainData_5[,2:14]^2))
+    y_train_5<-log(trainData_5[,15])
+    x_test_5<-as.matrix(cbind(testData_5[,2:5],testData_5[,8:14],testData_5[,2:14]^2))
+    y_test_5<-log(testData_5[,15])
+    
+    fit.train_5 = glmnet(x_train_5, y_train_5, alpha = 1, lambda = lambdas_5)
+    pred_5 = predict(fit.train_5, s = lambdas_5, newx = x_test_5)
+    
+    mse_5[i,1:length(lambdas_5)]<-colMeans((pred_5 - y_test_5)^2)
+    }
+
+# coef(fit.train_5,s=0.1)
+#Averaging fit at each order 
+fits.kfold_5 <- colMeans(mse_5)
+
+#plotting cross-validated prediction accuracy 
+
+#CHossing OPtimal Lambda
+plot(x=lambdas_5,y=colMeans(mse_5), type='l',xlab = "Lambda",ylab = "MSE")
+abline(h = +sd(fits.kfold_5)+min(fits.kfold_5),col="red")
+
+
+opt_lambda_5<-max(lambdas_5[abs(min(fits.kfold_5)-fits.kfold_5)/sd(fits.kfold_5)<1])
+
+trainData_x_test_5<-as.matrix(cbind(trainData[,2:5],trainData[,8:14],trainData[,2:14]^2))
+testData_x_test_5<-as.matrix(cbind(testData[,2:5],testData[,8:14],testData[,2:14]^2))
+testData_y_test_5<-log(testData[,15])
+fit.train_5 = glmnet(trainData_x_test_5, log(trainData[,15]), alpha = 1, lambda = opt_lambda_5)
+res_testData_5<- testData_y_test_5-predict(fit.train_5, s = opt_lambda_5, newx = testData_x_test_5) 
+
+# coef(fit.train_5)
+ 
+```
+
+
+## Question 6
+### Lasso with quadratic terms seems to be a good fit model
+```{r, echo=TRUE,warning=FALSE}
+
+colors_6 <- c("Original" = "red","Lasso" = "blue", "Ridge" = "pink","Lasso with Second Order" = "brown")
+
+ggplot(trainData,aes(x=log(trainData[,15])))+
+    ggtitle("Plotting the different Models - Train")+
+  xlab("Actual")+
+  ylab("Predicted")+
+geom_line(lwd = 1, aes(y = log(trainData[,15]))) +
+  geom_point(aes(y=predict(model_2, data=as.data.frame(trainData_x_test_2)) ,color = 'Original')) +
+  geom_point(aes(y=predict(fit.train_3, s = opt_lambda_3, newx = trainData_x_test_3) ,color = 'Lasso')) +
+  geom_point(aes(y=predict(fit.train_4, s = opt_lambda_4, newx = trainData_x_test_4) ,color = 'Ridge')) +
+  geom_point(aes(y=predict(fit.train_5, s = opt_lambda_5, newx = trainData_x_test_5) ,color = 'Lasso with Second Order')) +
+  ylim(1,5) +
+  scale_color_manual(name="Model",breaks=c("Original","Lasso", "Ridge","Lasso with Second Order"),values=colors_6)
+
+colors_6 <- c("Original" = "red","Lasso" = "blue", "Ridge" = "pink","Lasso with Second Order" = "brown")
+
+ggplot(testData,aes(x=log(testData[,15])))+
+    ggtitle("Plotting the different Models - Test")+
+  xlab("Actual")+
+  ylab("Predicted")+
+geom_line(lwd = 1, aes(y = log(testData[,15]))) +
+  geom_point(aes(y=predict(model_2, as.data.frame(testData_x_test_2,)) ,color = 'Original')) +
+  geom_point(aes(y=predict(fit.train_3, s = opt_lambda_3, newx = testData_x_test_3) ,color = 'Lasso')) +
+  geom_point(aes(y=predict(fit.train_4, s = opt_lambda_4, newx = testData_x_test_4) ,color = 'Ridge')) +
+  geom_point(aes(y=predict(fit.train_5, s = opt_lambda_5, newx = testData_x_test_5) ,color = 'Lasso with Second Order')) +
+  ylim(1,5) +
+  scale_color_manual(name="Model",breaks=c("Original","Lasso", "Ridge","Lasso with Second Order"),values=colors_6)
+
+
+length(predict(model_2, as.data.frame(testData_x_test_2)))
+
+```
+
+
